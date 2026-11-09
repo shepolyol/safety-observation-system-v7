@@ -15,7 +15,7 @@
 
 1. เข้า https://supabase.com/ แล้วสร้าง Project ใหม่
 2. เปิดเมนู SQL Editor
-3. เปิดไฟล์ `supabase/schema.sql` ในแพ็กเกจนี้ คัดลอกทั้งหมดไปวางใน SQL Editor แล้วกด Run
+3. เปิดไฟล์ `schema.sql` ในแพ็กเกจนี้ คัดลอกทั้งหมดไปวางใน SQL Editor แล้วกด Run
 4. ไปที่ Project Settings / API Keys (หรือ Connect) แล้วคัดลอก
    - Project URL
    - Secret API key ที่ขึ้นต้นด้วย `sb_secret_`
@@ -45,7 +45,7 @@ node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'
 ## ขั้นตอนที่ 3 — Deploy ไป Netlify
 
 1. แตกไฟล์ ZIP นี้ลงในโฟลเดอร์
-2. สร้าง Repository ใหม่ใน GitHub แล้ว Upload ไฟล์/โฟลเดอร์ทั้งหมดในแพ็กเกจนี้เข้า Repository (ต้องให้ `netlify.toml`, `public/`, `netlify/functions/` และ `supabase/` อยู่ระดับ Root)
+2. สร้าง Repository ใหม่ใน GitHub แล้ว Upload ไฟล์/โฟลเดอร์ทั้งหมดในแพ็กเกจนี้เข้า Repository (ต้องมี `netlify.toml`, `public/index.html`, `netlify/functions/api.mjs` และ `schema.sql` ตามโครงสร้างนี้)
 3. เข้า https://app.netlify.com/start แล้วเลือก Import from Git
 4. เลือก Repository ที่อัปโหลดไว้
 5. ตรวจสอบ Build settings:
