@@ -1,0 +1,8 @@
+{
+  "name": "safety-observation-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Public Safety Observation System hosted on Netlify with Supabase database and Resend email notifications",
+  "type": "module",
+  "engines": { "node": ">=22" }
+}
