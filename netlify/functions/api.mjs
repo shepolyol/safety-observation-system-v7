@@ -55,6 +55,12 @@ function reportFromDb(row) {
     ownerId: row.owner_id || '',
     ownerName: row.owner_name || 'Admin - รอมอบหมาย',
     rank: row.rank || '',
+    notificationNo: row.notification_no || '',
+    isCleared: row.is_cleared === true,
+    clearReason: row.clear_reason || '',
+    duplicateOf: row.duplicate_of || '',
+    clearedAt: row.cleared_at || null,
+    clearedBy: row.cleared_by || '',
     history: row.history || [],
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -161,7 +167,7 @@ async function notifyReporter(report, kind) {
 }
 async function publicBootstrap() {
   const [reportRows, employeeRows] = await Promise.all([
-    db('reports', 'GET', { select: 'id,type,category,dept,place,equipment,detail,status,report_date,reporter,reporter_id,suggestion,action,owner_id,owner_name,rank,history,created_at,updated_at', order: 'created_at.desc', limit: '2000' }),
+    db('reports', 'GET', { select: 'id,type,category,dept,place,equipment,detail,status,report_date,reporter,reporter_id,suggestion,action,owner_id,owner_name,rank,notification_no,is_cleared,clear_reason,duplicate_of,cleared_at,cleared_by,history,created_at,updated_at', order: 'created_at.desc', limit: '2000' }),
     db('employees', 'GET', { select: 'employee_id,full_name,department', active: 'eq.true', order: 'full_name.asc', limit: '5000' })
   ]);
   return json({ reports: (reportRows || []).map(reportFromDb), employees: (employeeRows || []).map(employeePublic) });
@@ -219,7 +225,7 @@ async function createReport(request) {
   return json({ report: reportFromDb(saved) }, 201);
 }
 async function adminReports() {
-  const rows = await db('reports', 'GET', { select: 'id,type,category,dept,place,equipment,detail,status,report_date,reporter,reporter_id,suggestion,action,owner_id,owner_name,rank,history,created_at,updated_at', order: 'created_at.desc', limit: '2000' });
+  const rows = await db('reports', 'GET', { select: 'id,type,category,dept,place,equipment,detail,status,report_date,reporter,reporter_id,suggestion,action,owner_id,owner_name,rank,notification_no,is_cleared,clear_reason,duplicate_of,cleared_at,cleared_by,history,created_at,updated_at', order: 'created_at.desc', limit: '2000' });
   return json({ reports: (rows || []).map(reportFromDb) });
 }
 async function updateReport(id, request) {
@@ -248,14 +254,31 @@ async function updateReport(id, request) {
       changes.owner_name = 'Admin - รอมอบหมาย';
     }
   }
+  const effectiveOwnerId = input.ownerId !== undefined ? input.ownerId : current.owner_id;
+  if (input.status === 'Assigned' && !effectiveOwnerId) return json({ error: 'กรุณาเลือกผู้รับผิดชอบก่อนเปลี่ยนสถานะเป็น Assigned' }, 400);
+  if (input.clearDuplicate === true && current.is_cleared === true) return json({ error: 'รายงานนี้ถูก Clear ไปแล้ว' }, 409);
   if (input.action !== undefined) changes.action = safeString(input.action, 3000, 'ความคืบหน้า');
   if (input.suggestion !== undefined) changes.suggestion = safeString(input.suggestion, 3000, 'แนวทางแก้ไข');
+  if (input.notificationNo !== undefined) changes.notification_no = safeString(input.notificationNo, 100, 'เลข Notification');
+  if (input.clearDuplicate === true) {
+    const reason = safeString(input.clearReason, 1000, 'เหตุผลการ Clear', true);
+    const duplicateOf = safeString(input.duplicateOf, 100, 'เลขรายงานหลักที่ซ้ำกัน', true);
+    if (duplicateOf === id) return json({ error: 'ไม่สามารถระบุรายงานเดียวกันเป็นรายการหลักได้' }, 400);
+    const target = await db('reports', 'GET', { select: 'id', id: `eq.${duplicateOf}`, limit: '1' });
+    if (!target?.[0]) return json({ error: 'ไม่พบเลขรายงานหลักที่ระบุ' }, 400);
+    changes.is_cleared = true;
+    changes.clear_reason = reason;
+    changes.duplicate_of = duplicateOf;
+    changes.cleared_at = new Date().toISOString();
+    changes.cleared_by = 'Admin';
+  }
   const changed = Object.entries(changes).some(([key, value]) => String(current[key] ?? '') !== String(value ?? ''));
   if (!changed) return json({ report: reportFromDb(current), email: 'not_needed' });
   const next = { ...current, ...changes };
   const ownerName = next.owner_name || 'Admin - รอมอบหมาย';
   const note = [`สถานะ: ${next.status}`, `ผู้รับผิดชอบ: ${ownerName}`, `Rank: ${next.rank ? `RANK ${next.rank}` : 'รอประเมิน'}`, next.action].filter(Boolean).join(' · ');
   const history = Array.isArray(current.history) ? [...current.history] : [];
+  if (input.clearDuplicate === true) history.unshift({ date: new Date().toISOString(), status: next.status, owner: 'Admin', note: `Clear รายงานซ้ำ: ${changes.clear_reason} · รายงานหลัก: ${changes.duplicate_of}` });
   history.unshift({ date: new Date().toISOString(), status: next.status, owner: ownerName, note });
   changes.history = history.slice(0, 200);
   changes.updated_at = new Date().toISOString();
@@ -263,7 +286,15 @@ async function updateReport(id, request) {
   const saved = updated?.[0];
   if (!saved) throw new Error('บันทึกการเปลี่ยนแปลงไม่สำเร็จ');
   await notifyReporter(saved, 'updated');
-  return json({ report: reportFromDb(saved) });
+  let assignmentEmail = null;
+  if (saved.status === 'Assigned' && saved.owner_id && (current.status !== 'Assigned' || current.owner_id !== saved.owner_id)) {
+    const assignee = await getEmployeeById(saved.owner_id);
+    const subject = `มอบหมายงาน Safety Observation ${saved.id}`;
+    const text = `คุณได้รับมอบหมายให้รับผิดชอบรายงาน Safety Observation\nเลขที่รายงาน: ${saved.id}\nประเภท: ${saved.type} / ${saved.category}\nแผนก: ${saved.dept}\nสถานที่: ${saved.place}\nเลข Notification: ${saved.notification_no || '-'}\nรายละเอียด: ${saved.detail}\n\nกรุณาเข้าสู่ระบบเพื่อติดตามและอัปเดตความคืบหน้า\nSafety Observation System`;
+    assignmentEmail = await sendMail({ to: assignee?.email || '', subject, text, reportId: saved.id });
+    await logMail(saved.id, assignee?.email || '', subject, assignmentEmail);
+  }
+  return json({ report: reportFromDb(saved), assignmentEmail });
 }
 async function listEmployees() {
   const rows = await db('employees', 'GET', { select: '*', order: 'full_name.asc', limit: '5000' });
